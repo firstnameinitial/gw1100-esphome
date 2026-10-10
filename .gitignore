@@ -1,0 +1,10 @@
+/.esphome/
+/secrets.yaml
+__pycache__/
+*.pyc
+*.bin
+*.elf
+*.map
+*.o
+*.log
+.DS_Store

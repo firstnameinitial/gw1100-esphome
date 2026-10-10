@@ -1,0 +1,492 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>GW1100</title>
+<style>
+:root{color-scheme:dark;
+  --bg:#0d0d0d; --panel:#1a1a19; --panel2:#141413;
+  --ink:#ffffff; --ink2:#c3c2b7; --mut:#898781;
+  --line:rgba(255,255,255,.10); --acc:#3987e5;
+  --good:#0ca30c; --warn:#fab219; --ser:#ec835a; --crit:#d03b3b;}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.muted{color:var(--mut)}
+header{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;gap:16px;padding:10px 16px;background:rgba(13,13,13,.86);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+.h-left{display:flex;align-items:center;gap:10px;min-width:0}
+#name{font-weight:600;font-size:15px;white-space:nowrap}
+#dotLab{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+.h-right{display:flex;align-items:center;gap:16px;font-size:12px;color:var(--mut)}
+#clock{font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut);flex:none}
+.dot.good{background:var(--good);box-shadow:0 0 7px var(--good)}
+.dot.warn{background:var(--warn);box-shadow:0 0 7px var(--warn)}
+.dot.crit{background:var(--crit);box-shadow:0 0 7px var(--crit)}
+nav{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line)}
+.tab{background:none;border:none;color:var(--mut);padding:11px 14px;font:inherit;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
+.tab:hover{color:var(--ink2)}
+.tab.on{color:var(--ink);border-bottom-color:var(--acc)}
+main{padding:16px;max-width:1280px;margin:0 auto}
+.sec{display:none}
+.sec.on{display:block}
+.grp{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut);margin:18px 0 8px;font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px 13px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.cl{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.lab{font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.05em}
+.chip{font-size:10px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:1px 5px;white-space:nowrap}
+.val{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;line-height:1.05;white-space:nowrap}
+.val.zero{color:var(--mut)}
+.val.crit{color:var(--crit)}
+.unit{font-size:11px;color:var(--mut)}
+.arr{display:inline-block;font-style:normal;color:var(--acc);margin-right:5px;font-size:18px}
+.rost{width:100%;border-collapse:collapse;font-size:13px}
+.rost th,.rost td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+.rost th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);font-weight:600;cursor:pointer;user-select:none}
+.rost th:hover{color:var(--ink2)}
+.rost th.sort-asc::after{content:' ^'}
+.rost th.sort-desc::after{content:' v'}
+.rost tbody tr:hover{background:rgba(255,255,255,.03)}
+.bars{display:inline-flex;align-items:flex-end;gap:2px;height:18px;vertical-align:middle;margin-right:7px}
+.sb{width:4px;border-radius:1px;background:#2f2f2d}
+.sb.good{background:var(--good)}.sb.warn{background:var(--warn)}.sb.ser{background:var(--ser)}.sb.crit{background:var(--crit)}
+.rssi{color:var(--ink2)}
+.age-warn{color:var(--warn)}.age-crit{color:var(--crit)}.age-miss{color:var(--mut)}
+.tag{font-size:10px;border-radius:4px;padding:1px 6px;border:1px solid currentColor}
+.tag.warn{color:var(--warn)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px;margin-bottom:14px}
+.sub{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);font-weight:600;margin-bottom:12px}
+.frm{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 16px}
+.f{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.04em}
+.f input.in,.f select.in{text-transform:none}
+.in{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 10px;font:inherit;font-size:14px;width:100%}
+.in:focus{outline:1px solid var(--acc);border-color:var(--acc)}
+input.mono,select.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.kwrap{display:flex;gap:6px}
+.kwrap .in{flex:1}
+.btn{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:8px 16px;font:inherit;font-size:13px;cursor:pointer}
+.btn:hover{background:#242422}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.sm{padding:8px 10px}
+.row{display:flex;align-items:center;gap:12px;margin-top:14px}
+.sstat{font-size:12px;color:var(--mut)}
+.sstat.good{color:var(--good)}.sstat.crit{color:var(--crit)}
+.stat{font-size:12px;color:var(--mut)}
+.stat.good{color:var(--good)}.stat.crit{color:var(--crit)}
+input.tgl{appearance:none;-webkit-appearance:none;width:40px;height:22px;border-radius:11px;background:#33332f;border:1px solid var(--line);position:relative;cursor:pointer;transition:.15s;flex:none;margin:0}
+input.tgl::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink2);transition:.15s}
+input.tgl:checked{background:var(--acc);border-color:var(--acc)}
+input.tgl:checked::after{left:20px;background:#fff}
+.togs{display:flex;flex-wrap:wrap;gap:8px 10px}
+.trow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+.trow input.tgl{width:32px;height:18px}
+.trow input.tgl::after{width:12px;height:12px;top:2px;left:2px}
+.trow input.tgl:checked::after{left:16px}
+.tl{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;align-items:start}
+.devinfo{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px 16px}
+.di{display:flex;flex-direction:column;gap:2px}
+.di .k{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+.di .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;font-size:14px}
+.empty{color:var(--mut);padding:12px 0;font-size:13px}
+#sensors{overflow-x:auto}
+.devstrip{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px 15px;margin-bottom:14px;font-size:12px}
+.devstrip .nm{font-weight:600;font-size:14px;color:var(--ink)}
+.scards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.scard{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:13px 15px;display:flex;flex-direction:column;gap:10px}
+.sh{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.sn{font-weight:600;font-size:14px}
+.sid{font-size:11px;color:var(--mut);margin-top:2px}
+.smeta{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:11px}
+.sbatt{font-size:10px;border-radius:4px;padding:1px 6px;border:1px solid currentColor;text-transform:uppercase;letter-spacing:.05em}
+.sbatt.ok{color:var(--good)}.sbatt.warn{color:var(--warn)}
+.sreads{display:flex;flex-wrap:wrap;gap:7px 16px}
+.mv{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;font-size:13px;color:var(--ink);white-space:nowrap}
+.mv.zero{color:var(--mut)}.mv.crit{color:var(--crit)}
+.mu{font-style:normal;font-size:10px;color:var(--mut);margin-left:3px}
+.mk{font-size:10px;color:var(--mut);margin-right:4px;text-transform:uppercase;letter-spacing:.03em}
+.tag.ok{color:var(--good)}
+.srv{display:grid;grid-template-columns:118px minmax(120px,1fr) 66px minmax(140px,1.4fr) minmax(120px,1fr) 40px 30px 42px;gap:6px;align-items:center;margin-bottom:6px}
+.srv .in{padding:6px 8px;font-size:13px}
+.srv .se{display:flex;align-items:center;gap:3px;font-size:10px;color:var(--mut);text-transform:uppercase}
+.srv .sc{font-size:11px}
+@media(max-width:640px){.srv{grid-template-columns:1fr 1fr;padding:8px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px}}
+@media(max-width:640px){
+  header{flex-direction:column;align-items:flex-start;gap:6px}
+  .h-right{flex-wrap:wrap;gap:8px 12px}
+  .cards{grid-template-columns:repeat(auto-fill,minmax(118px,1fr))}
+  .val{font-size:22px}
+  main{padding:10px}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="h-left">
+    <span id="dot" class="dot"></span>
+    <span id="name">GW1100</span>
+    <span id="dotLab">???</span>
+  </div>
+  <div class="h-right">
+    <span id="ipmac" class="mono">???</span>
+    <span id="upd" class="mono">???</span>
+    <span id="clock" class="mono">--:--:--</span>
+  </div>
+</header>
+<nav>
+  <button class="tab on" data-tab="live">Live</button>
+  <button class="tab" data-tab="sensors">Sensors</button>
+  <button class="tab" data-tab="upload">Upload</button>
+  <button class="tab" data-tab="system">System</button>
+</nav>
+<main>
+  <section id="live" class="sec on"><div id="liveDev" class="devstrip"></div><div id="liveGrid"></div></section>
+  <section id="sensors" class="sec">
+    <table class="rost">
+      <thead><tr>
+        <th data-k="fam">Family</th><th data-k="id">ID</th><th data-k="rssi">RSSI</th><th data-k="last">Last</th><th>Batt</th><th>En</th>
+      </tr></thead>
+      <tbody id="rostBody"></tbody>
+    </table>
+  </section>
+  <section id="upload" class="sec">
+    <div class="panel">
+      <div class="stat" id="upStat">???</div>
+      <div class="frm">
+        <label class="f">Enabled<input id="up_en" class="tgl" type="checkbox"></label>
+        <label class="f">Ecowitt cloud (OEM app)<input id="up_cloud" class="tgl" type="checkbox"></label>
+        <label class="f">Host<input id="up_host" class="in" type="text" spellcheck="false" autocomplete="off"></label>
+        <label class="f">Path<input id="up_path" class="in" type="text" spellcheck="false" autocomplete="off"></label>
+        <label class="f">Port<input id="up_port" class="in mono" type="number" min="1" max="65535"></label>
+        <div class="f">Passkey<span class="kwrap"><input id="up_key" class="in mono" type="password" spellcheck="false" autocomplete="off"><button id="upReveal" class="btn sm" type="button">show</button></span></div>
+        <label class="f">Interval (s)<input id="up_int" class="in mono" type="number" min="5"></label>
+      </div>
+      <div class="row"><button id="upSave" class="btn primary">Save</button><span id="upSaveStat" class="sstat"></span></div>
+    </div>
+    <div class="panel">
+      <div class="sub">Additional servers</div>
+      <div id="srvList"></div>
+      <div class="row"><button id="srvAdd" class="btn">Add server</button><span class="sstat">Wunderground / MQTT / extra Ecowitt targets</span></div>
+    </div>
+  </section>
+  <section id="system" class="sec">
+    <div class="cols">
+      <div class="panel">
+        <div class="sub">General</div>
+        <div class="frm">
+          <label class="f">Timezone<select id="tz" class="in"></select></label>
+          <label class="f">RF band<select id="rf" class="in mono"><option value="433">433 MHz</option><option value="868">868 MHz</option><option value="915">915 MHz</option><option value="920">920 MHz</option></select></label>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="sub">Calibration</div>
+        <div class="frm">
+          <label class="f">Temp offset (degC)<input id="cal_t_off" class="in mono" type="number" step="0.1"></label>
+          <label class="f">Hum offset (%)<input id="cal_h_off" class="in mono" type="number" step="0.1"></label>
+          <label class="f">Press offset (hPa)<input id="cal_p_off" class="in mono" type="number" step="0.1"></label>
+          <label class="f">Rain gain<input id="cal_rain_g" class="in mono" type="number" step="0.01"></label>
+          <label class="f">Wind gain<input id="cal_wind_g" class="in mono" type="number" step="0.01"></label>
+          <label class="f">Solar gain<input id="cal_solar_g" class="in mono" type="number" step="0.01"></label>
+          <label class="f">UV gain<input id="cal_uv_g" class="in mono" type="number" step="0.01"></label>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="sub">Sensor families</div>
+        <div id="famTog" class="togs"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sub">Device</div>
+      <div id="devInfo" class="devinfo"></div>
+    </div>
+    <div class="row"><button id="sysSave" class="btn primary">Save</button><span id="sysSaveStat" class="sstat"></span></div>
+  </section>
+</main>
+<script>
+const STATE_URL='/state', CONFIG_URL='/config', POLL=15000;
+let S=null, online=false, demoMode=false, lastFetchAt=null, formsBuilt=false, curTab='live';
+let sortKey='last', sortDir=-1;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function fmt(v,d){if(v==null||v==='')return '';const n=Number(v);return isFinite(n)?(d!=null?n.toFixed(d):String(Math.round(n))):'';}
+function age(ts){const s=Math.floor(Date.now()/1000)-Number(ts);if(!isFinite(s)||s<0)return '???';if(s<10)return 'now';if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d';}
+function fmtKB(b){b=Number(b);if(!isFinite(b))return '???';return b>=1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(1)+' kB';}
+function fmtUpt(s){s=Number(s);if(!isFinite(s))return '???';const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+'d '+h+'h':(h?h+'h '+m+'m':m+'m');}
+function rssiLevel(r){if(r==null)return 0;if(r>=-55)return 5;if(r>=-65)return 4;if(r>=-75)return 3;if(r>=-85)return 2;return 1;}
+
+const READS=[
+['t_in','Temp','degC','INDOOR','GW1100',1],
+['h_in','Hum','%','INDOOR','GW1100',0],
+['p','Press','hPa','INDOOR','GW1100',1],
+['t_out','Temp','degC','OUTDOOR','WH31',1],
+['h_out','Hum','%','OUTDOOR','WH31',0],
+['leaf_wet','Leaf','','OUTDOOR','WH31',0],
+['wind_dir','Dir','deg','WIND','WS90',0],
+['wind_spd','Speed','m/s','WIND','WS90',1],
+['wind_gust','Gust','m/s','WIND','WS90',1],
+['rain','Rain','mm','RAIN','WS90',1],
+['rain_rate','Rate','mm/h','RAIN','WS90',1],
+['uv','UV','idx','SOLAR','WS90',0],
+['solar','Solar','W/m2','SOLAR','WS90',0],
+['soil_moist','Moist','%','SOIL','WH51',0],
+['soil_t','Temp','degC','SOIL','WH51',1],
+['soil_ec','EC','uS/cm','SOIL','WH51',0],
+['pm25','PM2.5','ug/m3','AIR','WH41',1],
+['pm10','PM10','ug/m3','AIR','WH41',0],
+['co2','CO2','ppm','AIR','WH45',0],
+['light_cnt','Strikes','','LIGHTNING','WH57',0],
+['light_dist','Dist','km','LIGHTNING','WH57',0],
+['leak','Leak','','LEAK','WH55',0]
+];
+const GROUPS=['INDOOR','OUTDOOR','WIND','RAIN','SOLAR','SOIL','AIR','LIGHTNING','LEAK'];
+const TZ=['UTC','Europe/London','Europe/Berlin','Europe/Paris','Europe/Madrid','Europe/Amsterdam','Europe/Prague','Europe/Warsaw','Europe/Athens','Europe/Istanbul','Europe/Moscow','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Anchorage','America/Sao_Paulo','America/Mexico_City','Africa/Cairo','Africa/Johannesburg','Asia/Dubai','Asia/Karachi','Asia/Kolkata','Asia/Bangkok','Asia/Shanghai','Asia/Hong_Kong','Asia/Tokyo','Asia/Seoul','Asia/Singapore','Australia/Perth','Australia/Adelaide','Australia/Sydney','Australia/Brisbane','Pacific/Auckland','Pacific/Honolulu'];
+
+// Which reading keys a given sensor family transmits. Drives the per-sensor cards.
+const FAM_READS={
+  WH25:[['t_in','Temp','degC',1],['h_in','Hum','%',0],['p','Press','hPa',1]],
+  Indoor:[['t_in','Temp','degC',1],['h_in','Hum','%',0],['p','Press','hPa',1]],
+  WS90:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['max_gust','Max gust','m/s',1],['wind_avg','Dir 10m','deg',0],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['rain_24h','24h rain','mm',1],['rain_state','Raining','',0],['uv','UV','UV',0],['solar','Solar','W/m2',0],['batt_v','Batt','V',1],['cap_v','Cap','V',1]],
+  WS80:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
+  WS68:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
+  WS85:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
+  WH24:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
+  WH65:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
+  WS69:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
+  WH31:[['t_out','Temp','degC',1],['h_out','Hum','%',0]],
+  WH51:[['soil_moist','Moist','%',0]],
+  WH52:[['soil_moist','Moist','%',0],['soil_t','Temp','degC',1],['soil_ec','EC','uS/cm',0]],
+  WN34:[['soil_t','Temp','degC',1]],
+  WN38:[['soil_t','Temp','degC',1]],
+  WH40:[['rain','Rain','mm',1]],
+  WN20:[['rain','Rain','mm',1]],
+  WH41:[['pm25','PM2.5','ug/m3',1],['pm10','PM10','ug/m3',0]],
+  WH43:[['pm25','PM2.5','ug/m3',1]],
+  WH45:[['pm25','PM2.5','ug/m3',1],['co2','CO2','ppm',0]],
+  WH46:[['pm25','PM2.5','ug/m3',1],['co2','CO2','ppm',0]],
+  WH57:[['light_cnt','Strikes','',0],['light_dist','Dist','km',0]],
+  WH55:[['leak','Leak','',0]]
+};
+function cardinal(d){return ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(d/22.5)%16];}
+function editing(){const a=document.activeElement;return a&&(a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA');}
+function miniVal(src,key,label,unit,dec){
+  const v=src[key];
+  if(v==null||v==='')return '';
+  const n=Number(v);
+  const lab='<span class="mk">'+label+'</span>';
+  if(key==='leak')return '<span class="mv'+(n?' crit':' zero')+'">'+lab+(n?'LEAK':'DRY')+'</span>';
+  if(key==='rain_state')return '<span class="mv'+(n?' crit':' zero')+'">'+lab+(n?'RAIN':'DRY')+'</span>';
+  if(key==='wind_dir'||key==='wind_avg')return '<span class="mv">'+lab+cardinal(n)+' '+fmt(v,dec)+'<i class="mu">deg</i></span>';
+  return '<span class="mv'+(n===0?' zero':'')+'">'+lab+fmt(v,dec)+'<i class="mu">'+unit+'</i></span>';
+}
+function sensorCard(s){
+  const reads=FAM_READS[s.fam]||[];
+  const v=s.v||{};
+  const vals=reads.map(r=>miniVal(v,r[0],r[1],r[2],r[3])).filter(Boolean);
+  if(s.fam==='Indoor'){  // built-in I2C sensor: no id/rssi/batt meta
+    return '<div class="scard"><div class="sh"><div><div class="sn">Indoor</div></div></div>'+
+      (vals.length?'<div class="sreads">'+vals.join('')+'</div>':'')+'</div>';
+  }
+  const l=rssiLevel(s.rssi), sc=l>=4?'good':(l===3?'warn':(l===2?'ser':'crit'));
+  const a=age(s.last);
+  return '<div class="scard"><div class="sh">'+
+    '<div><div class="sn">'+esc(s.fam)+'</div><div class="sid mono">'+esc(s.id||'')+'</div></div>'+
+    '<div class="smeta">'+
+      '<span class="sbatt '+(s.batt?'warn':'ok')+'">'+(s.batt?'LOW':'OK')+'</span>'+
+      '<span class="mono rssi">'+seg(l,sc)+s.rssi+' dBm</span>'+
+      '<span class="mono muted">'+a+'</span>'+
+    '</div></div>'+
+    (vals.length?'<div class="sreads">'+vals.join('')+'</div>':'')+
+    '</div>';
+}
+function renderLive(){
+  const dev=S.dev||{};
+  $('liveDev').innerHTML=
+    '<span class="nm">'+esc(dev.name||'GW1100')+'</span>'+
+    '<span class="muted">'+esc(dev.fw||'')+'</span>'+
+    '<span class="mono">'+esc(dev.ip||'???')+' ?? '+esc(dev.mac||'???')+'</span>'+
+    '<span class="mono">'+esc(dev.ssid||'???')+(dev.wifi_rssi!=null?' '+dev.wifi_rssi+' dBm':'')+'</span>'+
+    '<span class="mono">'+fmtUpt(dev.uptime)+' up</span>'+
+    '<span class="mono">'+fmtKB(dev.heap)+' free</span>';
+  const ro=(S.roster||[]).filter(s=>s.en!==false);
+  $('liveGrid').innerHTML=ro.length?'<div class="scards">'+ro.map(sensorCard).join('')+'</div>':'<div class="empty">No sensors discovered yet</div>';
+}
+function seg(l,sc){let h='<span class="bars">';for(let i=0;i<5;i++)h+='<i class="sb '+(i<l?sc:'')+'" style="height:'+(6+i*3)+'px"></i>';return h+'</span>';}
+function row(s){
+  const a=age(s.last), d=Date.now()/1000-s.last;
+  const st=s.last==null?'miss':(d>900?'crit':(d>300?'warn':''));
+  const l=rssiLevel(s.rssi), sc=l>=4?'good':(l===3?'warn':(l===2?'ser':'crit'));
+  const f=esc(s.fam), id=esc(s.id||'');
+  const en=s.en!==false;
+  return '<tr><td>'+f+'</td>'+
+    '<td class="mono">'+id+'</td>'+
+    '<td class="mono rssi">'+seg(l,sc)+'<span>'+s.rssi+'</span></td>'+
+    '<td class="mono'+(st?' age-'+st:'')+'">'+a+'</td>'+
+    '<td>'+(s.batt?'<span class="tag warn">LOW</span>':'<span class="tag ok">OK</span>')+'</td>'+
+    '<td><input type="checkbox"'+(en?' checked':'')+' onchange="postEnable(\''+f+'\',\''+id+'\',this.checked)"></td></tr>';
+}
+async function postEnable(fam,id,en){
+  const arr=S.roster||[];
+  const e=arr.find(x=>x.fam===fam&&x.id===id);
+  if(e)e.en=en;
+  renderRoster();
+  try{
+    await fetch(CONFIG_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sensors:[{fam:fam,id:id,en:en}]})});
+  }catch(e){}
+}
+function renderRoster(){
+  const rows=(S.roster||[]).slice();
+  rows.sort((a,b)=>{const x=a[sortKey],y=b[sortKey];let r;if(sortKey==='last'||sortKey==='rssi'||sortKey==='ch')r=(Number(x)||0)-(Number(y)||0);else r=String(x==null?'':x).localeCompare(String(y==null?'':y));return r*sortDir;});
+  $('rostBody').innerHTML=rows.map(row).join('')||'<tr><td colspan="6" class="empty">No sensors discovered</td></tr>';
+}
+function renderUpStat(){
+  const u=S.up, el=$('upStat');
+  if(!u||u.last==null){el.textContent='No upload recorded';el.className='stat';return;}
+  el.textContent=(u.ok?'OK':'FAIL')+' ?? '+age(u.last)+(u.ok?'':' ?? '+u.code);
+  el.className='stat '+(u.ok?'good':'crit');
+}
+function renderUpload(){
+  const u=(S.cfg&&S.cfg.up)||{};
+  $('up_en').checked=!!u.en;$('up_cloud').checked=!!u.cloud;$('up_host').value=u.host||'';$('up_path').value=u.path||'';$('up_port').value=u.port||'';$('up_key').value=u.key||'';$('up_int').value=u.int||'';
+  renderServers();
+}
+const PROTO_NAMES={ecowitt:'Ecowitt',wunderground:'Wunderground',mqtt:'MQTT'};
+function srvRow(s){
+  const sel=Object.keys(PROTO_NAMES).map(k=>'<option value="'+k+'"'+(s.proto===k?' selected':'')+'>'+PROTO_NAMES[k]+'</option>').join('');
+  return '<div class="srv">'+
+    '<select class="in mono sp">'+sel+'</select>'+
+    '<input class="in sh" placeholder="host" value="'+esc(s.host||'')+'" spellcheck="false" autocomplete="off">'+
+    '<input class="in mono sp2" placeholder="port" type="number" value="'+esc(s.port||80)+'">'+
+    '<input class="in sp3" placeholder="path" value="'+esc(s.path||'')+'" spellcheck="false" autocomplete="off">'+
+    '<input class="in sk" placeholder="key / station id" value="'+esc(s.key||'')+'" spellcheck="false" autocomplete="off">'+
+    '<label class="se">on<input type="checkbox"'+(s.en?' checked':'')+'></label>'+
+    '<button class="btn sm sd" type="button">??</button>'+
+    (s.code!=null?'<span class="mono muted sc">'+(s.code===200?'ok':s.code)+'</span>':'')+
+    '</div>';
+}
+function renderServers(){
+  const a=(S.cfg&&S.cfg.servers)||[];
+  $('srvList').innerHTML=a.map(srvRow).join('');
+}
+function collectServers(){
+  return [...document.querySelectorAll('#srvList .srv')].map(r=>{
+    const sp=r.querySelector('.sp'),sh=r.querySelector('.sh'),sp2=r.querySelector('.sp2'),sp3=r.querySelector('.sp3'),sk=r.querySelector('.sk'),se=r.querySelector('.se input');
+    return {proto:sp.value,host:sh.value.trim(),port:parseInt(sp2.value,10)||80,path:sp3.value.trim(),key:sk.value.trim(),en:se.checked};
+  });
+}
+function buildFam(fe){
+  const cur={};document.querySelectorAll('#famTog input').forEach(i=>cur[i.value]=i.checked);
+  const set={};(S.roster||[]).forEach(x=>set[x.fam]=1);Object.keys(fe).forEach(k=>set[k]=1);
+  const fams=Object.keys(set).sort();
+  $('famTog').innerHTML=fams.map(f=>{const on=f in cur?cur[f]:(fe[f]!==false);return '<label class="trow"><span class="tl">'+esc(f)+'</span><input class="tgl" type="checkbox" value="'+esc(f)+'"'+(on?' checked':'')+'></label>';}).join('')||'<div class="empty">No families</div>';
+}
+function renderSystem(){
+  const c=S.cfg||{}, cal=c.cal||{};
+  const tz=$('tz');
+  TZ.forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;tz.appendChild(o);});
+  tz.value=c.tz||'UTC';
+  $('rf').value=String(c.rf||868);
+  $('cal_t_off').value=cal.t_off!=null?cal.t_off:0;
+  $('cal_h_off').value=cal.h_off!=null?cal.h_off:0;
+  $('cal_p_off').value=cal.p_off!=null?cal.p_off:0;
+  $('cal_rain_g').value=cal.rain_g!=null?cal.rain_g:1;
+  $('cal_wind_g').value=cal.wind_g!=null?cal.wind_g:1;
+  $('cal_solar_g').value=cal.solar_g!=null?cal.solar_g:1;
+  $('cal_uv_g').value=cal.uv_g!=null?cal.uv_g:1;
+  buildFam(c.fam_en||{});
+}
+function renderDevInfo(){
+  const d=S.dev||{};
+  const it=[['MAC',d.mac],['IP',d.ip],['SSID',d.ssid],['WiFi RSSI',d.wifi_rssi!=null?d.wifi_rssi+' dBm':null],['Free heap',fmtKB(d.heap)],['Uptime',fmtUpt(d.uptime)],['Firmware',d.fw]];
+  $('devInfo').innerHTML=it.map(x=>'<div class="di"><span class="k">'+x[0]+'</span><span class="v">'+esc(x[1]==null?'???':x[1])+'</span></div>').join('');
+}
+function renderHeader(){
+  const d=S.dev||{};
+  $('name').textContent=d.name||'GW1100';
+  $('ipmac').textContent=(d.ip||'???')+' ?? '+(d.mac||'???');
+}
+function renderUpd(){$('upd').textContent=lastFetchAt?('updated '+age(Math.floor(lastFetchAt/1000))):'???';}
+function updateDot(){
+  const dot=$('dot'),lab=$('dotLab');
+  if(demoMode){dot.className='dot warn';lab.textContent='DEMO';}
+  else if(!online){dot.className='dot crit';lab.textContent='OFFLINE';}
+  else{dot.className='dot good';lab.textContent='LIVE';}
+}
+function num(id){const v=parseFloat($(id).value);return isFinite(v)?v:0;}
+function collectCfg(){
+  const up={en:$('up_en').checked,cloud:$('up_cloud').checked,host:$('up_host').value.trim(),path:$('up_path').value.trim(),port:parseInt($('up_port').value,10)||80,key:$('up_key').value,int:parseInt($('up_int').value,10)||60};
+  const cal={t_off:num('cal_t_off'),h_off:num('cal_h_off'),p_off:num('cal_p_off'),rain_g:num('cal_rain_g'),wind_g:num('cal_wind_g'),solar_g:num('cal_solar_g'),uv_g:num('cal_uv_g')};
+  const fam_en={};document.querySelectorAll('#famTog input').forEach(i=>fam_en[i.value]=i.checked);
+  return {up:up,tz:$('tz').value,rf:parseInt($('rf').value,10)||868,cal:cal,fam_en:fam_en,servers:collectServers()};
+}
+async function save(target){
+  const cfg=collectCfg(), old=S.cfg; S.cfg=cfg;
+  const st=$(target==='sys'?'sysSaveStat':'upSaveStat');
+  st.textContent='saving???';st.className='sstat';
+  try{
+    const r=await fetch(CONFIG_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||j.ok===false)throw new Error(j.err||('HTTP '+r.status));
+    if(j.cfg)S.cfg=j.cfg;
+    st.textContent='saved';st.className='sstat good';
+  }catch(e){S.cfg=old;st.textContent=e.message||'failed';st.className='sstat crit';}
+}
+async function load(){
+  try{
+    const r=await fetch(STATE_URL,{cache:'no-store'});
+    if(!r.ok)throw 0;
+    S=await r.json();online=true;demoMode=false;lastFetchAt=Date.now();
+  }catch(e){
+    online=false;
+    if(!S){S=demo();demoMode=true;lastFetchAt=Date.now();}
+  }
+  renderHeader();updateDot();
+  if(!editing()){renderLive();renderRoster();}
+  renderUpStat();renderDevInfo();
+  if(!formsBuilt){renderUpload();renderSystem();formsBuilt=true;}
+  else buildFam((S.cfg&&S.cfg.fam_en)||{});
+}
+function tick(){
+  $('clock').textContent=new Date().toTimeString().slice(0,8);
+  if(!S)return;
+  renderUpd();renderUpStat();
+  if(curTab==='sensors' && !editing())renderRoster();
+}
+function show(tab){
+  curTab=tab;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
+  document.querySelectorAll('.sec').forEach(s=>s.classList.toggle('on',s.id===tab));
+  if(tab==='sensors')renderRoster();
+}
+function setSort(k){
+  if(sortKey===k)sortDir=-sortDir;
+  else{sortKey=k;sortDir=(k==='last'||k==='rssi')?-1:1;}
+  document.querySelectorAll('.rost th[data-k]').forEach(th=>{th.classList.remove('sort-asc','sort-desc');if(th.dataset.k===sortKey)th.classList.add(sortDir>0?'sort-asc':'sort-desc');});
+  renderRoster();
+}
+function demo(){const now=Math.floor(Date.now()/1000);return{
+  dev:{name:'GW1100-A1B2',mac:'BC:DD:C2:12:34:56',ip:'???',ssid:'home-iot',wifi_rssi:-58,heap:31240,uptime:738400,fw:'2026.7.4',ts:now},
+  r:{t_in:21.4,h_in:47,p:1012.3,t_out:18.9,h_out:61,leaf_wet:0,wind_dir:225,wind_spd:2.4,wind_gust:4.1,rain:3.2,rain_rate:0,uv:0,solar:0,soil_moist:34,soil_t:16.8,soil_ec:0,pm25:4.1,pm10:5,co2:512,light_cnt:0,light_dist:0,leak:0},
+  roster:[{fam:'WS90',id:'4A3F12',ch:0,rssi:-71,last:now,batt:false},{fam:'WH31',id:'0B22C4',ch:1,rssi:-64,last:now-12,batt:false},{fam:'WH51',id:'2C08A1',ch:2,rssi:-78,last:now-45,batt:false},{fam:'WH41',id:'1F90EE',ch:1,rssi:-82,last:now-300,batt:true},{fam:'WH57',id:'3A11B7',ch:0,rssi:-69,last:now-8,batt:false}],
+  up:{ok:true,last:now-30,code:200},
+  cfg:{up:{en:true,host:'???',path:'/data/report/',port:8080,key:'pass1234',int:60},tz:'UTC',rf:868,cal:{t_off:0,h_off:0,p_off:0,rain_g:1,wind_g:1,solar_g:1,uv_g:1},fam_en:{WS90:true,WH31:true,WH51:true,WH41:true,WH57:true,WH45:true,WH55:true}}
+};}
+function init(){
+  document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab)));
+  document.querySelectorAll('.rost th[data-k]').forEach(th=>th.addEventListener('click',()=>setSort(th.dataset.k)));
+  $('upSave').addEventListener('click',()=>save('up'));
+  $('sysSave').addEventListener('click',()=>save('sys'));
+  $('upReveal').addEventListener('click',e=>{e.preventDefault();const i=$('up_key'),s=i.type==='password';i.type=s?'text':'password';$('upReveal').textContent=s?'hide':'show';});
+  $('srvAdd').addEventListener('click',()=>{const d=document.createElement('div');d.innerHTML=srvRow({proto:'wunderground',host:'',port:80,path:'',key:'',en:false});$('srvList').appendChild(d.firstChild);});
+  $('srvList').addEventListener('click',e=>{if(e.target.classList.contains('sd'))e.target.closest('.srv').remove();});
+  document.querySelector('.rost th[data-k="last"]').classList.add('sort-desc');
+  tick();load();setInterval(load,POLL);setInterval(tick,1000);
+}
+document.addEventListener('DOMContentLoaded',init);
+</script>
+</body>
+</html>
