@@ -1,5 +1,9 @@
 # GW1100 ESPHome firmware
 
+**Beta. Initial installation requires opening the case and serial flashing;
+this can damage or brick your device. No warranty.**
+Independent project, not affiliated with or endorsed by Ecowitt or Fine Offset.
+
 Replacement firmware for the Ecowitt GW1100 (ESP8266). Receives multiple Ecowitt /
 Fine Offset sensors, keeps their readings separate, and sends them to Home Assistant
 through ESPHome, MQTT or the Ecowitt integration. An on-device web interface shows
@@ -31,18 +35,14 @@ confirmed during serial recovery on a GW1100 board in August 2026:
 Back up the entire 2 MB flash before writing. The original vendor OTA route is not
 an ESPHome installation method. Pause weather uploads during ESPHome OTA updates.
 
-## Warning
+## Notes
 
 This source revision has passed host tests and builds but has not been flashed
 or verified on physical hardware.
 
-Independent project; not affiliated with or endorsed by Ecowitt or Fine Offset.
-Optional cloud uploads use Ecowitt's service and are subject to its terms.
-
-Experimental, unofficial firmware. Flashing can erase settings, void your warranty
-or brick the device. Keep your own stock backup and a serial recovery route. Provided
-**as is, without warranty**; you accept the risk of damage and data loss.
+Keep your own stock backup and a serial recovery route.
 The web interface has no authentication: use it only on a trusted local network.
+Optional cloud uploads use Ecowitt's service and are subject to its terms.
 
 Source is licensed under GPL-3.0-only, with compatible third-party material listed
 in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Run `tests/run.sh` for host checks.
