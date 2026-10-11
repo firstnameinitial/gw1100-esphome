@@ -15,7 +15,7 @@ by Aleksandr Anisimov. Its notice is in `LICENSES/CMT2300A-MIT.txt`.
 with the radio hardware and Fine Offset transmissions. These settings originated
 in analysis of the devices' factory configuration, including undocumented
 calibration values; they are retained as hardware interface data. They are not a
-firmware payload. This project does not claim a clean-room development process.
+firmware payload. 
 
 ## Fine Offset decoders
 
