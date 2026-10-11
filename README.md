@@ -37,9 +37,6 @@ an ESPHome installation method. Pause weather uploads during ESPHome OTA updates
 
 ## Notes
 
-This source revision has passed host tests and builds but has not been flashed
-or verified on physical hardware.
-
 Keep your own stock backup and a serial recovery route.
 The web interface has no authentication: use it only on a trusted local network.
 Optional cloud uploads use Ecowitt's service and are subject to its terms.
