@@ -26,6 +26,11 @@ ota:
   - platform: esphome
     password: !secret ota_password
 
+safe_mode:
+  num_attempts: 3
+  boot_is_good_after: 120s
+  reboot_timeout: 10min
+
 mqtt:
   broker: !secret mqtt_broker
   port: 1883

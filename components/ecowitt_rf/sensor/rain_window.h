@@ -12,6 +12,29 @@ template<uint8_t N, uint32_t INTERVAL_MS> class RainWindow {
     static constexpr uint32_t SLOT_MS = INTERVAL_MS;
     static constexpr uint8_t SLOTS = N;
 
+    struct State {
+        uint16_t amounts[N] = {};
+        uint32_t previous_counter = 0, phase_ms = 0;
+        uint8_t head = 0;
+        bool initialized = false;
+    };
+    State state() const {
+        State s;
+        for (uint8_t i = 0; i < N; ++i) s.amounts[i] = amounts_[i];
+        s.previous_counter = previous_counter_; s.phase_ms = phase_ms_;
+        s.head = head_; s.initialized = initialized_;
+        return s;
+    }
+    bool restore(const State &s, uint32_t elapsed_ms, uint32_t now_ms) {
+        if (s.head >= N || s.phase_ms >= SLOT_MS) return false;
+        for (uint8_t i = 0; i < N; ++i) amounts_[i] = s.amounts[i];
+        previous_counter_ = s.previous_counter; phase_ms_ = s.phase_ms;
+        head_ = s.head; initialized_ = s.initialized;
+        last_ms_ = now_ms - elapsed_ms;
+        sample(previous_counter_ * 0.1f, now_ms);
+        return true;
+    }
+
     float sample(float counter_mm, uint32_t now_ms) {
         if (!std::isfinite(counter_mm) || counter_mm < 0) return total_mm();
         const uint32_t counter = (uint32_t)std::lround(counter_mm * 10.0f);

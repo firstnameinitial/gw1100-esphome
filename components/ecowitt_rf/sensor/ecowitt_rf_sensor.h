@@ -35,6 +35,10 @@
 #include <ESP8266WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ctime>
+#include <cstdlib>
+#include <new>
+#include "bounded_json.h"
+#include "rain_recovery.h"
 
 #include "cmt2300a.h"
 #include "fineoffset.h"
@@ -50,6 +54,7 @@ namespace ecowitt_rf {
 // is only 128 words (512 B); config is one blob and the server list a second, so they share
 // it. Per-sensor overrides are RAM-only (no room) and re-learned on boot.
 enum : uint32_t {
+    PREF_RAIN_RTC = 0xE615, // separate RTC allocator; flash layout stays unchanged
     PREF_CFG = 0xE601,       // consolidated DeviceConfig blob
     PREF_RAIN = 0xE612,      // compact rain-aggregate state (first bucket)
     PREF_DISABLED = 0xE614,  // per-sensor disable list
@@ -355,7 +360,13 @@ class EcowittRFSensor : public PollingComponent {
     int up_code_ = 0;
     int cloud_code_ = 0;        // Ecowitt cloud (OEM) last HTTP status / diagnostic
     bool web_registered_ = false;
-    std::string body_buf_;
+    bool state_response_active_ = false;
+    uint32_t state_rejected_ = 0;
+    ESPPreferenceObject rain_rtc_pref_;
+    RainCheckpoint rain_pending_;
+    bool rain_restore_pending_ = false;
+    bool rain_restored_ = false;
+    bool rain_rtc_saved_ = false;
 
     // -- RF diagnostics (exposed on /state for live RX debugging) --
     int8_t rssi_dbm_ = 0;      // CMT2300A reg 0x70 - 128 (live RSSI, dBm)
@@ -590,20 +601,28 @@ class EcowittRFSensor : public PollingComponent {
             return;
         srv->on("/", HTTP_GET, [this](AsyncWebServerRequest *req) { handle_index(req); });
         srv->on("/state", HTTP_GET, [this](AsyncWebServerRequest *req) { handle_state(req); });
+        srv->on("/health", HTTP_GET, [this](AsyncWebServerRequest *req) { handle_state(req, true); });
         srv->on("/config", HTTP_POST,
                 [this](AsyncWebServerRequest *req) {
-                    // Fires after the body is fully received (handleBody below only
-                    // accumulates). Process the buffered JSON and reply.
-                    if (body_buf_.empty())
-                        req->send(400, "application/json", "{\"ok\":false,\"err\":\"empty body\"}");
-                    else {
-                        handle_config(req, body_buf_);
-                        body_buf_.clear();
+                    if (req->contentLength() > 2048) {
+                        req->send(413, "application/json", "{\"ok\":false,\"err\":\"body too large\"}");
+                    } else if (req->_tempObject == nullptr) {
+                        req->send(503, "application/json", "{\"ok\":false,\"err\":\"body unavailable\"}");
+                    } else {
+                        handle_config(req, static_cast<const uint8_t *>(req->_tempObject), req->contentLength());
                     }
-                },
-                nullptr,
-                [this](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
-                    body_buf_.append(reinterpret_cast<char *>(data), len);
+                }, nullptr,
+                [](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
+                    if (total == 0 || total > 2048 || index > total || len > total - index) return;
+                    if (index == 0 && ESP.getFreeHeap() >= total + 6000 &&
+                        ESP.getMaxFreeBlockSize() >= total + 32)
+                        req->_tempObject = std::malloc(total + 1);
+                    if (req->_tempObject) {
+                        auto *body = static_cast<uint8_t *>(req->_tempObject);
+                        std::memcpy(body + index, data, len);
+                        body[total] = 0;
+                    }
+                    // ESPAsyncWebServer frees _tempObject when this request is destroyed.
                 });
         web_registered_ = true;
     }
@@ -612,168 +631,190 @@ class EcowittRFSensor : public PollingComponent {
         req->send_P(200, "text/html; charset=utf-8", DASHBOARD_HTML);
     }
 
-    void handle_state(AsyncWebServerRequest *req) {
-        // The full register dump is ~192 chars — the single biggest string in this document
-        // and a pure debugging aid. With the ESP8266 down to ~8 kB free heap the whole
-        // build_json() was failing and /state was silently returning "{}", which is why the
-        // on-device dashboard showed nothing. It is now opt-in: /state?regs=1
-        const bool want_regs = req->hasParam("regs");
+    // Owns exactly one payload allocation. No DOM, conversion to std::string, or
+    // AsyncBasicResponse's second String copy. Its destructor releases the single-flight gate.
+    class StateResponse : public AsyncAbstractResponse {
+     public:
+        StateResponse(char *body, size_t length, bool *active) : body_(body), active_(active) {
+            _code = 200; _contentType = "application/json"; _contentLength = length;
+            addHeader("Cache-Control", "no-store");
+        }
+        ~StateResponse() override { std::free(body_); *active_ = false; }
+        bool _sourceValid() const override { return body_ != nullptr; }
+        size_t _fillBuffer(uint8_t *buffer, size_t maximum) override {
+            size_t n = std::min(maximum, _contentLength - offset_);
+            std::memcpy(buffer, body_ + offset_, n); offset_ += n; return n;
+        }
+     private:
+        char *body_; bool *active_; size_t offset_ = 0;
+    };
+
+    void handle_state(AsyncWebServerRequest *req, bool health = false) {
+        if (state_response_active_ || ESP.getFreeHeap() < 6500) {
+            ++state_rejected_; req->send(503, "application/json", "{\"err\":\"busy or low heap\"}"); return;
+        }
+        const bool want_regs = !health && req->hasParam("regs");
         if (want_regs) {
-            char hx[3];
-            regdump_.clear();
+            char hx[3]; regdump_.clear();
             for (uint8_t i = 0; i < 0x60; ++i) {
-                std::snprintf(hx, sizeof(hx), "%02X", read_reg(i));
-                regdump_ += hx;
+                std::snprintf(hx, sizeof(hx), "%02X", read_reg(i)); regdump_ += hx;
             }
         }
-        std::string body = json::build_json([this, want_regs](JsonObject root) {
-            JsonObject dev = root["dev"].to<JsonObject>();
-            dev["name"] = "GW1100";
-            dev["mac"] = WiFi.macAddress().c_str();
-            dev["ip"] = WiFi.localIP().toString().c_str();
-            dev["ssid"] = WiFi.SSID().c_str();
-            dev["wifi_rssi"] = WiFi.RSSI();
-            dev["heap"] = (uint32_t)ESP.getFreeHeap();
-            dev["uptime"] = (uint32_t)(millis() / 1000);
-            dev["fw"] = ESPHOME_VERSION;
-            dev["build"] = "wn32p-multi-indoor-20261010";
-            dev["ts"] = (uint32_t)::time(nullptr);
-
-            JsonObject diag = root["diag"].to<JsonObject>();
-            diag["rssi"] = rssi_dbm_;
-            diag["reg01"] = reg01_;
-            diag["reg02"] = reg02_;
-            diag["reg03"] = reg03_;
-            diag["reg04"] = reg04_;
-            diag["reg17"] = reg17_;
-            diag["reg18"] = reg18_;
-            diag["reg6d"] = reg6d_;
-            diag["reg6e"] = reg6e_;
-            diag["reg6f"] = reg6f_;
-            diag["reg61"] = reg61_;
-            if (want_regs) diag["regdump"] = regdump_.c_str();
-            diag["rej_rssi"] = rejected_rssi_;   // frames dropped at the noise floor
-            diag["reg3f"] = reg3f_;
-            diag["reg3f_test"] = reg3f_test_;
-            diag["reg43"] = reg43_;
-            diag["reg47"] = reg47_;
-            diag["reg45"] = reg45_;
-            diag["rssi_min"] = rssi_min_;
-            diag["rssi_max"] = rssi_max_;
-            diag["rssi_changes"] = rssi_changes_;
-            diag["last_hex"] = last_hex_.c_str();
-
-            emit_readings(root);
-            emit_roster(root);
-
-            JsonObject up = root["up"].to<JsonObject>();
-            up["ok"] = up_ok_;
-            up["last"] = up_last_;
-            up["code"] = up_code_;
-            up["cloud"] = cloud_code_;
-
-            emit_config(root);
-        });
-        req->send(200, "application/json", body.c_str());
+        BoundedJson measure;
+        write_state(measure, health, want_regs);
+        size_t capacity = measure.size() + 32;  // heap/uptime digit changes between passes
+        if (!state_response_fits(capacity, ESP.getFreeHeap(), ESP.getMaxFreeBlockSize())) {
+            ++state_rejected_; req->send(503, "application/json", "{\"err\":\"low heap\"}"); return;
+        }
+        char *body = static_cast<char *>(std::malloc(capacity));
+        if (!body) { ++state_rejected_; req->send(503); return; }
+        BoundedJson j(body, capacity);
+        write_state(j, health, want_regs);
+        if (!j.fits()) { std::free(body); req->send(503); return; }
+        auto *response = new (std::nothrow) StateResponse(body, j.size(), &state_response_active_);
+        if (!response) { std::free(body); req->send(503); return; }
+        state_response_active_ = true;
+        req->send(response);
     }
 
-    static void emit_values(JsonObject o, const UiState &u) {
+    void write_state(BoundedJson &j, bool health, bool want_regs) {
+        j.object(); j.object("dev");
+        j.field("name", "GW1100");
+        j.field("mac", WiFi.macAddress().c_str());
+        j.field("ip", WiFi.localIP().toString().c_str());
+        j.field("ssid", WiFi.SSID().c_str());
+        j.field("wifi_rssi", WiFi.RSSI());
+        j.field("heap", (uint32_t)ESP.getFreeHeap());
+        j.field("uptime", (uint32_t)(millis() / 1000));
+        j.field("fw", ESPHOME_VERSION);
+        j.field("build", "rain-recovery-status-20261016");
+        j.field("ts", (uint32_t)::time(nullptr));
+        j.field("max_block", ESP.getMaxFreeBlockSize());
+        j.field("reset_reason", ESP.getResetInfoPtr()->reason);
+        j.field("reset_exception", ESP.getResetInfoPtr()->exccause);
+        j.field("reset_pc", ESP.getResetInfoPtr()->epc1);
+        j.end_object();
+        j.object("up"); j.field("ok", up_ok_); j.field("last", up_last_);
+        j.field("code", up_code_); j.field("cloud", cloud_code_); j.end_object();
+        j.object("recovery"); j.field("rain_pending", rain_restore_pending_);
+        j.field("rain_restored", rain_restored_); j.field("rain_rtc_saved", rain_rtc_saved_);
+        j.field("state_rejected", state_rejected_); j.end_object();
+        write_values(j, "r", ui_);
+        if (!health) {
+            j.object("diag");
+        j.field("rssi", rssi_dbm_);
+        j.field("reg01", reg01_);
+        j.field("reg02", reg02_);
+        j.field("reg03", reg03_);
+        j.field("reg04", reg04_);
+        j.field("reg17", reg17_);
+        j.field("reg18", reg18_);
+        j.field("reg6d", reg6d_);
+        j.field("reg6e", reg6e_);
+        j.field("reg6f", reg6f_);
+        j.field("reg61", reg61_);
+        if (want_regs) j.field("regdump", regdump_.c_str());
+        j.field("rej_rssi", rejected_rssi_);
+        j.field("reg3f", reg3f_);
+        j.field("reg3f_test", reg3f_test_);
+        j.field("reg43", reg43_);
+        j.field("reg47", reg47_);
+        j.field("reg45", reg45_);
+        j.field("rssi_min", rssi_min_);
+        j.field("rssi_max", rssi_max_);
+        j.field("rssi_changes", rssi_changes_);
+        j.field("last_hex", last_hex_.c_str());
+            j.end_object();
+            j.array("roster");
+            uint32_t now_unix = (uint32_t)::time(nullptr);
+            for (size_t i = 0; i < roster_count_; ++i) {
+                j.object(); const auto &r = roster_[i];
+                j.field("fam", family_tag(r.family)); char id[8];
+                std::snprintf(id, sizeof(id), "%06X", r.id & 0xFFFFFF); j.field("id", id);
+                int16_t idx = find_sensor((uint8_t)r.family, r.id);
+                j.field("ch", idx >= 0 ? sensor_slots_[idx].channel : r.channel);
+                j.field("en", idx >= 0 ? sensor_slots_[idx].enabled != 0 : true);
+                j.field("name", idx >= 0 ? sensor_slots_[idx].name : "");
+                j.field("rssi", r.rssi);
+                uint32_t age = (millis() - r.last_ms) / 1000;
+                j.field("last", now_unix >= age ? now_unix - age : 0);
+                j.field("batt", r.battery_low); write_values(j, "v", r.v); j.end_object();
+            }
+            j.end_array(); write_config(j);
+        }
+        j.end_object();
+    }
+
+    static void write_values(BoundedJson &j, const char *key, const UiState &u) {
         static const char *const KEYS[UiState::N] = {
             "t_in", "h_in", "p", "t_out", "h_out", "leaf_wet", "wind_dir", "wind_spd",
             "wind_gust", "rain", "rain_rate", "uv", "solar", "soil_moist", "soil_t",
             "soil_ec", "pm25", "pm10", "co2", "light_cnt", "light_dist", "leak",
             "batt_v", "cap_v", "max_gust", "wind_avg", "rain_24h", "rain_state"};
-        for (uint8_t i = 0; i < UiState::N; i++)
-            if (u.has(i))
-                o[KEYS[i]] = u.v[i];
+        j.object(key);
+        for (uint8_t i = 0; i < UiState::N; ++i) if (u.has(i)) j.field(KEYS[i], u.v[i]);
+        j.end_object();
     }
 
-    void emit_readings(JsonObject root) {
-        emit_values(root["r"].to<JsonObject>(), ui_);
-    }
-
-    void emit_roster(JsonObject root) {
-        JsonArray arr = root["roster"].to<JsonArray>();
-        uint32_t now_unix = (uint32_t)::time(nullptr);
-        for (size_t i = 0; i < roster_count_; i++) {
-            JsonObject e = arr.add<JsonObject>();
-            e["fam"] = family_tag(roster_[i].family);
-            char id[8];
-            std::snprintf(id, sizeof(id), "%06X", roster_[i].id & 0xFFFFFF);
-            e["id"] = id;
-            int16_t idx = find_sensor((uint8_t)roster_[i].family, roster_[i].id);
-            e["ch"] = (idx >= 0) ? sensor_slots_[idx].channel : roster_[i].channel;
-            e["en"] = (idx >= 0) ? (sensor_slots_[idx].enabled != 0) : true;
-            e["name"] = (idx >= 0) ? sensor_slots_[idx].name : "";
-            e["rssi"] = roster_[i].rssi;
-            uint32_t age_s = (millis() - roster_[i].last_ms) / 1000;
-            e["last"] = (now_unix >= age_s) ? (now_unix - age_s) : 0;
-            e["batt"] = roster_[i].battery_low;
-            emit_values(e["v"].to<JsonObject>(), roster_[i].v);
-        }
-    }
-
-    void emit_config(JsonObject root) {
-        JsonObject cfg = root["cfg"].to<JsonObject>();
-        JsonObject up = cfg["up"].to<JsonObject>();
-        up["en"] = cfg_.upload_enabled;
-        up["cloud"] = cfg_.cloud_enabled;
-        up["host"] = cfg_.host;
-        up["path"] = cfg_.path;
-        up["port"] = cfg_.port;
-        up["key"] = cfg_.passkey;
-        up["int"] = cfg_.interval_s;
-
-        JsonArray srv = cfg["servers"].to<JsonArray>();
+    void write_config(BoundedJson &j) {
+        j.object("cfg"); j.object("up");
+        j.field("en", cfg_.upload_enabled); j.field("cloud", cfg_.cloud_enabled);
+        j.field("host", cfg_.host); j.field("path", cfg_.path); j.field("port", cfg_.port);
+        j.field("key", cfg_.passkey); j.field("int", cfg_.interval_s); j.end_object();
+        j.array("servers");
         for (size_t i = 0; i < extra_count_; ++i) {
-            JsonObject s = srv.add<JsonObject>();
-            s["proto"] = (extra_servers_[i].proto == Protocol::WUNDERGROUND) ? "wunderground"
-                       : (extra_servers_[i].proto == Protocol::MQTT) ? "mqtt" : "ecowitt";
-            s["host"] = extra_servers_[i].host;
-            s["port"] = extra_servers_[i].port;
-            s["path"] = extra_servers_[i].path;
-            s["key"] = extra_servers_[i].key;
-            s["en"] = extra_servers_[i].enabled;
-            s["code"] = extra_code_[i];
+            const auto &s = extra_servers_[i]; j.object();
+            j.field("proto", s.proto == Protocol::WUNDERGROUND ? "wunderground" :
+                s.proto == Protocol::MQTT ? "mqtt" : "ecowitt");
+            j.field("host", s.host.c_str()); j.field("port", s.port); j.field("path", s.path.c_str());
+            j.field("key", s.key.c_str()); j.field("en", s.enabled); j.field("code", extra_code_[i]);
+            j.end_object();
         }
-        cfg["tz"] = cfg_.timezone[0] ? cfg_.timezone : "Europe/London";
-        cfg["rf"] = (cfg_.band == 0 ? 433 : cfg_.band == 1 ? 868 : cfg_.band == 2 ? 915 : 920);
-
-        JsonObject cal = cfg["cal"].to<JsonObject>();
-        cal["t_off"] = cfg_.cal_temp;
-        cal["h_off"] = cfg_.cal_hum;
-        cal["p_off"] = cfg_.cal_press;
-        cal["rain_g"] = cfg_.cal_rain;
-        cal["wind_g"] = cfg_.cal_wind;
-        cal["solar_g"] = cfg_.cal_solar;
-        cal["uv_g"] = cfg_.cal_uv;
-
-        JsonObject fe = cfg["fam_en"].to<JsonObject>();
-        static const char *const TAGS[] = {
-            "WH25", "WH31", "WH51", "WN34", "WN38", "WH52", "WH24", "WH65", "WS69", "WH40",
-            "WN20", "WS68", "WS80", "WS85", "WS90", "WH41", "WH43", "WH45", "WH46", "WH57",
-            "WH55", "WH54", "WH35"};
-        for (const char *t : TAGS) {
-            int8_t g = tag_to_group(t);
-            if (g >= 0)
-                fe[t] = (cfg_.family_enable & (1u << g)) != 0;
+        j.end_array(); j.field("tz", cfg_.timezone[0] ? cfg_.timezone : "Europe/London");
+        j.field("rf", cfg_.band == 0 ? 433 : cfg_.band == 1 ? 868 : cfg_.band == 2 ? 915 : 920);
+        j.object("cal"); j.field("t_off", cfg_.cal_temp); j.field("h_off", cfg_.cal_hum);
+        j.field("p_off", cfg_.cal_press); j.field("rain_g", cfg_.cal_rain);
+        j.field("wind_g", cfg_.cal_wind); j.field("solar_g", cfg_.cal_solar);
+        j.field("uv_g", cfg_.cal_uv); j.end_object(); j.object("fam_en");
+        static const char *const TAGS[] = {"WH25", "WH31", "WH51", "WN34", "WN38", "WH52", "WH24", "WH65", "WS69", "WH40",
+            "WN20", "WS68", "WS80", "WS85", "WS90", "WH41", "WH43", "WH45", "WH46", "WH57", "WH55", "WH54", "WH35"};
+        for (const char *t : TAGS) { int8_t g = tag_to_group(t); if (g >= 0) j.field(t, (cfg_.family_enable & (1u << g)) != 0); }
+        j.end_object(); j.array("sensors");
+        for (uint8_t i = 0; i < sensor_count_; ++i) {
+            const auto &s = sensor_slots_[i]; j.object(); j.field("fam", family_tag((Family)s.family));
+            char id[8]; uint32_t sid = ((uint32_t)s.id0 << 16) | ((uint32_t)s.id1 << 8) | s.id2;
+            std::snprintf(id, sizeof(id), "%06X", sid); j.field("id", id);
+            j.field("ch", s.channel); j.field("en", s.enabled != 0); j.end_object();
         }
-
-        JsonArray sa = cfg["sensors"].to<JsonArray>();
-        for (uint8_t i = 0; i < sensor_count_; i++) {
-            JsonObject s = sa.add<JsonObject>();
-            s["fam"] = family_tag((Family)sensor_slots_[i].family);
-            uint32_t sid = ((uint32_t)sensor_slots_[i].id0 << 16) | ((uint32_t)sensor_slots_[i].id1 << 8) | sensor_slots_[i].id2;
-            char id[8];
-            std::snprintf(id, sizeof(id), "%06X", sid);
-            s["id"] = id;
-            s["ch"] = sensor_slots_[i].channel;
-            s["en"] = sensor_slots_[i].enabled != 0;
-        }
+        j.end_array(); j.end_object();
     }
 
-    void handle_config(AsyncWebServerRequest *req, const std::string &body) {
-        bool ok = json::parse_json(body, [this](JsonObject root) -> bool {
+    void handle_config(AsyncWebServerRequest *req, const uint8_t *body, size_t length) {
+        bool ok = json::parse_json(body, length, [this](JsonObject root) -> bool {
+            if (!root["rain_history"].isNull()) {
+                if (root.size() != 1 || rain_.count() == 0) return false;
+                JsonObject history = root["rain_history"].as<JsonObject>();
+                const char *fam = history["fam"].as<const char *>();
+                const char *id = history["id"].as<const char *>();
+                if (!fam || !id || tag_to_family(fam) == Family::Unknown || std::strlen(id) != 6) return false;
+                char *end = nullptr; uint32_t sid = (uint32_t)std::strtoul(id, &end, 16);
+                if (!end || *end) return false;
+                uint32_t key = ((uint32_t)tag_to_family(fam) << 24) | sid;
+                auto &b = rain_.buckets()[0];
+                if (key != b.key) return false;
+                JsonArray samples = history["samples"].as<JsonArray>();
+                if (samples.size() < 2 || samples.size() > 64) return false;
+                RainHistoryPoint points[64]; size_t count = 0;
+                for (JsonVariant sample : samples) {
+                    JsonArray row = sample.as<JsonArray>();
+                    if (row.size() != 2 || !row[0].is<uint32_t>() || !row[1].is<float>()) return false;
+                    points[count++] = {row[0].as<uint32_t>(), row[1].as<float>()};
+                }
+                uint32_t now = (uint32_t)::time(nullptr);
+                if (!restore_rain_history(points, count, b.last_counter, now, millis(), b.rolling, b.recent)) return false;
+                rain_restore_pending_ = false; rain_restored_ = true; checkpoint_rain(now);
+                return rain_rtc_saved_;
+            }
             if (JsonObject up = root["up"].as<JsonObject>()) {
                 if (!up["en"].isNull()) set_cfg_upload_enabled(up["en"].as<bool>());
                 if (!up["cloud"].isNull()) set_cfg_cloud(up["cloud"].as<bool>());
@@ -859,8 +900,7 @@ class EcowittRFSensor : public PollingComponent {
             }
             return true;
         });
-        std::string resp = json::build_json([ok](JsonObject o) { o["ok"] = ok; });
-        req->send(ok ? 200 : 400, "application/json", resp.c_str());
+        req->send(ok ? 200 : 400, "application/json", ok ? "{\"ok\":true}" : "{\"ok\":false}");
     }
 
     void setup() override {
@@ -932,8 +972,21 @@ class EcowittRFSensor : public PollingComponent {
                     week = (uint8_t)((doy - 1) / 7);
                 }
             }
+            const uint32_t rain_key = ((uint32_t)r.family << 24) | (r.id & 0xFFFFFF);
+            const uint32_t rain_now = (uint32_t)::time(nullptr);
+            if (rain_restore_pending_ && rain_key == rain_pending_.key && year != 0) {
+                auto *bucket = rain_.find(rain_key);
+                rain_restored_ = rain_pending_.restore(rain_key, rain_now, millis(), bucket->rolling, bucket->recent);
+                rain_restore_pending_ = false;
+            }
             rain_.sample((uint8_t)r.family, r.id, r.rain_mm, doy, hour, week, month, year,
                          (uint32_t)millis(), agg);
+            if (rain_restore_pending_ && rain_key == rain_pending_.key) {
+                // NTP is not ready: unknown is safer than overwriting retained HA rain with zero.
+                agg.last24h_mm = NAN; agg.rate_mmh = NAN;
+            } else if (year != 0 && rain_.count() && rain_.buckets()[0].key == rain_key) {
+                checkpoint_rain(rain_now);
+            }
             r.rain_event_mm = agg.event_mm; r.rain_hour_mm = agg.hour_mm; r.rain_day_mm = agg.day_mm;
             r.rain_week_mm = agg.week_mm; r.rain_month_mm = agg.month_mm; r.rain_year_mm = agg.year_mm;
             r.rain_rate_mmh = agg.rate_mmh;
@@ -1334,6 +1387,14 @@ class EcowittRFSensor : public PollingComponent {
         servers_pref_ = global_preferences->make_preference<uint8_t[SERVERS_BLOB]>(PREF_SERVERS, true);
         rain_pref_ = global_preferences->make_preference<uint8_t[sizeof(RainPersist)]>(PREF_RAIN, true);
         disabled_pref_ = global_preferences->make_preference<uint8_t[sizeof(DisabledList)]>(PREF_DISABLED, true);
+        // ESPHome2026.7.4 reserves normal preference offsets0..77; the next
+        // region is eboot's scratch space. Never let this checkpoint spill there.
+        constexpr size_t rain_words = (sizeof(RainCheckpoint) + 3) / 4 + 1;
+        if (global_preferences->current_offset + rain_words <= 78)
+            rain_rtc_pref_ = global_preferences->make_preference<RainCheckpoint>(PREF_RAIN_RTC, false);
+        else
+            ESP_LOGE("ecowitt_rf", "No safe RTC space for rain checkpoint");
+        rain_restore_pending_ = rain_rtc_pref_.load(&rain_pending_) && rain_pending_.valid();
     }
 
     void load_cfg() {
@@ -1385,6 +1446,15 @@ class EcowittRFSensor : public PollingComponent {
         }
         servers_pref_.save(&blob);
         global_preferences->sync();
+    }
+
+    void checkpoint_rain(uint32_t now_unix) {
+        if (rain_.count() == 0 || now_unix < 1704067200UL) return;
+        const auto &b = rain_.buckets()[0];
+        RainCheckpoint saved;
+        saved.key = b.key; saved.unix_time = now_unix;
+        saved.rolling = b.rolling.state(); saved.recent = b.recent.state();
+        rain_rtc_saved_ = rain_rtc_pref_.save(&saved);
     }
 
     // Rain-aggregate state (the first bucket). Persisted so monthly/yearly totals survive

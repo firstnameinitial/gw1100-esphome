@@ -37,6 +37,16 @@ an ESPHome installation method. Pause weather uploads during ESPHome OTA updates
 
 ## Notes
 
+`/health` provides compact upload, heap, reset-reason and rain-recovery diagnostics.
+Full `/state` responses use bounded memory; concurrent or oversized requests return
+HTTP 503 instead of risking a reset. Configuration bodies are limited to 2 KB.
+
+The primary rain sensor's rolling 24-hour and ten-minute windows are checkpointed
+to RTC memory and aged against the clock after a restart or OTA. This does not
+write flash or change existing settings. RTC storage can be lost when power is
+removed. For migration or a cold start, a retained recorder can restore dated rain
+counter observations through `/config`; see [rain recovery](docs/rain-recovery.md).
+
 Keep your own stock backup and a serial recovery route.
 The web interface has no authentication: use it only on a trusted local network.
 Optional cloud uploads use Ecowitt's service and are subject to its terms.
