@@ -362,6 +362,8 @@ class EcowittRFSensor : public PollingComponent {
     int cloud_code_ = 0;        // Ecowitt cloud (OEM) last HTTP status / diagnostic
     bool web_registered_ = false;
     bool state_response_active_ = false;
+    bool http_upload_active_ = false;
+    uint32_t upload_deferred_ = 0;
     uint32_t state_rejected_ = 0;
     ESPPreferenceObject rain_rtc_pref_;
     RainCheckpoint rain_pending_;
@@ -635,7 +637,7 @@ class EcowittRFSensor : public PollingComponent {
     }
 
     void handle_state(AsyncWebServerRequest *req, bool health = false) {
-        if (state_response_active_ || ESP.getFreeHeap() < 6500) {
+        if (state_response_active_ || http_upload_active_ || ESP.getFreeHeap() < 6500) {
             ++state_rejected_; req->send(503, "application/json", "{\"err\":\"busy or low heap\"}"); return;
         }
         const bool want_regs = !health && req->hasParam("regs");
@@ -683,7 +685,7 @@ class EcowittRFSensor : public PollingComponent {
         j.field("code", up_code_); j.field("cloud", cloud_code_); j.end_object();
         j.object("recovery"); j.field("rain_pending", rain_restore_pending_);
         j.field("rain_restored", rain_restored_); j.field("rain_rtc_saved", rain_rtc_saved_);
-        j.field("state_rejected", state_rejected_); j.end_object();
+        j.field("state_rejected", state_rejected_); j.field("upload_deferred", upload_deferred_); j.end_object();
         write_values(j, "r", ui_);
         if (!health) {
             j.object("diag");
@@ -1215,6 +1217,16 @@ class EcowittRFSensor : public PollingComponent {
         return r.family == Family::WH25 && r.model != 0;
     }
 
+    int http_request_guarded(bool body, const std::string &host, uint16_t port,
+                             const std::string &path, const std::string &query) {
+        // WiFiClient can yield to an inbound request while waiting for a reply.
+        // Reject diagnostics during that yield instead of allocating over a live upload.
+        http_upload_active_ = true;
+        int result = ecowitt_rf::http_request(body, host, port, path, query);
+        http_upload_active_ = false;
+        return result;
+    }
+
     void upload_reading(const ecowitt_rf::Reading &r) {
         if (!cfg_.upload_enabled)
             return;
@@ -1234,10 +1246,13 @@ class EcowittRFSensor : public PollingComponent {
                 ESP_LOGW("ecowitt_rf", "WH31 channel %u reserved for remote indoor sensor; MQTT only", r.channel);
             return;
         }
+        // Keep outbound HTTP and owned diagnostic payloads out of each other's
+        // heap budget. Native/MQTT publication continues; HTTP retries next interval.
+        if (state_response_active_) ++upload_deferred_;
         // Primary Ecowitt server (YAML / config entity, backward compatible).
-        if (!upload.host.empty()) {
+        if (!state_response_active_ && !upload.host.empty()) {
             std::string q = ecowitt_rf::reading_query(upload, r);
-            int code = ecowitt_rf::http_request(true, upload.host, upload.port, upload.path, q);
+            int code = http_request_guarded(true, upload.host, upload.port, upload.path, q);
             up_ok_ = (code == 200);
             up_code_ = code;
             up_last_ = (uint32_t)::time(nullptr);
@@ -1252,19 +1267,19 @@ class EcowittRFSensor : public PollingComponent {
                 mqtt_upload_reading(s, r, i);
                 continue;
             }
-            if (s.host.empty())
+            if (state_response_active_ || s.host.empty())
                 continue;
             if (s.proto == Protocol::WUNDERGROUND) {
                 // Wunderground's host/path are fixed constants (raw-socket HTTP, so the legacy
                 // rtupdate endpoint, not the HTTPS one); only the station ID (key) varies.
                 std::string q = ecowitt_rf::wunderground_query(s.key, r);
-                extra_code_[i] = ecowitt_rf::http_request(false, "rtupdate.wunderground.com", 80,
+                extra_code_[i] = http_request_guarded(false, "rtupdate.wunderground.com", 80,
                                                           "/weatherstation/updateweatherstation.php", q);
             } else {  // ECOWITT (or unknown) — POST like the primary
                 UploadConfig tmp;
                 tmp.host = s.host; tmp.port = s.port; tmp.path = s.path; tmp.passkey = s.key;
                 std::string q = ecowitt_rf::reading_query(tmp, r);
-                extra_code_[i] = ecowitt_rf::http_request(true, s.host, s.port, s.path, q);
+                extra_code_[i] = http_request_guarded(true, s.host, s.port, s.path, q);
             }
         }
     }
@@ -1273,7 +1288,7 @@ class EcowittRFSensor : public PollingComponent {
         // Ecowitt CLOUD (the OEM upload path) — the stock GW1100 posts here so the WS View /
         // Ecowitt app sees live data. Same PASSKEY + field set as the primary, plus dateutc
         // (the cloud rejects a stale timestamp). Fixed endpoint, gated by cfg_.cloud_enabled.
-        if (cfg_.cloud_enabled) {
+        if (cfg_.cloud_enabled && !state_response_active_) {
             std::string q = ecowitt_rf::reading_query(upload, r);
             time_t now = ::time(nullptr);
             struct tm *t = ::gmtime(&now);
@@ -1284,7 +1299,7 @@ class EcowittRFSensor : public PollingComponent {
                 if (!q.empty()) q += '&';
                 q += buf;
             }
-            cloud_code_ = ecowitt_rf::http_request(true, "cdnrtpdate.ecowitt.net", 80, "/data/report/", q);
+            cloud_code_ = http_request_guarded(true, "cdnrtpdate.ecowitt.net", 80, "/data/report/", q);
         }
     }
 

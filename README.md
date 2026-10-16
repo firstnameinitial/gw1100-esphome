@@ -39,7 +39,9 @@ an ESPHome installation method. Pause weather uploads during ESPHome OTA updates
 
 `/health` provides compact upload, heap, reset-reason and rain-recovery diagnostics.
 Full `/state` responses use bounded memory; concurrent or oversized requests return
-HTTP 503 instead of risking a reset. Configuration bodies are limited to 2 KB.
+HTTP 503 instead of risking a reset. Diagnostics and outbound HTTP uploads share
+a memory gate; the dashboard retries busy reads on its next poll. Configuration
+bodies are limited to 2 KB.
 
 The primary rain sensor's rolling 24-hour and ten-minute windows are checkpointed
 to RTC memory and aged against the clock after a restart or OTA. This does not

@@ -438,6 +438,10 @@ async function save(target){
 async function load(){
   try{
     const r=await fetch(STATE_URL,{cache:'no-store'});
+    if(r.status===503){
+      if(S && Date.now()-lastFetchAt>15000){online=false;renderHeader();updateDot();}
+      return; // normal polling retries a busy device without replacing live data with demo values
+    }
     if(!r.ok)throw 0;
     S=await r.json();online=true;demoMode=false;lastFetchAt=Date.now();
   }catch(e){
