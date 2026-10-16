@@ -250,7 +250,7 @@ const TZ=['UTC','Europe/London','Europe/Berlin','Europe/Paris','Europe/Madrid','
 const FAM_READS={
   WH25:[['t_in','Temp','degC',1],['h_in','Hum','%',0],['p','Press','hPa',1]],
   Indoor:[['t_in','Temp','degC',1],['h_in','Hum','%',0],['p','Press','hPa',1]],
-  WS90:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['max_gust','Max gust','m/s',1],['wind_avg','Dir 10m','deg',0],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['rain_24h','24h rain','mm',1],['rain_state','Raining','',0],['uv','UV','UV',0],['solar','Solar','W/m2',0],['batt_v','Batt','V',1],['cap_v','Cap','V',1]],
+  WS90:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['max_gust','Max gust','m/s',1],['wind_avg','Dir 10m','deg',0],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['rain_24h','24h rain','mm',1],['rain_state','Wet flag','',0],['uv','UV','UV',0],['solar','Solar','W/m2',0],['batt_v','Batt','V',1],['cap_v','Cap','V',1]],
   WS80:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
   WS68:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
   WS85:[['t_out','Temp','degC',1],['h_out','Hum','%',0],['wind_dir','Dir','deg',0],['wind_spd','Wind','m/s',1],['wind_gust','Gust','m/s',1],['rain','Rain','mm',1],['rain_rate','Rate','mm/h',1],['uv','UV','UV',0],['solar','Solar','W/m2',0]],
@@ -279,7 +279,7 @@ function miniVal(src,key,label,unit,dec){
   const n=Number(v);
   const lab='<span class="mk">'+label+'</span>';
   if(key==='leak')return '<span class="mv'+(n?' crit':' zero')+'">'+lab+(n?'LEAK':'DRY')+'</span>';
-  if(key==='rain_state')return '<span class="mv'+(n?' crit':' zero')+'">'+lab+(n?'RAIN':'DRY')+'</span>';
+  if(key==='rain_state')return '<span class="mv'+(n?' crit':' zero')+'">'+lab+(n?'WET':'DRY')+'</span>';
   if(key==='wind_dir'||key==='wind_avg')return '<span class="mv">'+lab+cardinal(n)+' '+fmt(v,dec)+'<i class="mu">deg</i></span>';
   return '<span class="mv'+(n===0?' zero':'')+'">'+lab+fmt(v,dec)+'<i class="mu">'+unit+'</i></span>';
 }

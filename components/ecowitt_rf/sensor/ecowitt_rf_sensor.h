@@ -38,6 +38,7 @@
 #include <cstdlib>
 #include <new>
 #include "bounded_json.h"
+#include "owned_response.h"
 #include "rain_recovery.h"
 
 #include "cmt2300a.h"
@@ -475,6 +476,7 @@ class EcowittRFSensor : public PollingComponent {
         cfg_.upload_enabled = v;
         save_cfg();
         apply_cfg();
+        if (upload_switch_) upload_switch_->publish_state(v);
     }
     void set_cfg_cloud(bool v) {
         cfg_.cloud_enabled = v;
@@ -488,6 +490,7 @@ class EcowittRFSensor : public PollingComponent {
         else
             cfg_.family_enable &= ~(1u << group);
         save_cfg();
+        if (group < 12 && family_switches_[group]) family_switches_[group]->publish_state(v);
     }
     void set_cal_temp(float v) { cfg_.cal_temp = v; save_cfg(); }
     void set_cal_hum(float v) { cfg_.cal_hum = v; save_cfg(); }
@@ -631,24 +634,6 @@ class EcowittRFSensor : public PollingComponent {
         req->send_P(200, "text/html; charset=utf-8", DASHBOARD_HTML);
     }
 
-    // Owns exactly one payload allocation. No DOM, conversion to std::string, or
-    // AsyncBasicResponse's second String copy. Its destructor releases the single-flight gate.
-    class StateResponse : public AsyncAbstractResponse {
-     public:
-        StateResponse(char *body, size_t length, bool *active) : body_(body), active_(active) {
-            _code = 200; _contentType = "application/json"; _contentLength = length;
-            addHeader("Cache-Control", "no-store");
-        }
-        ~StateResponse() override { std::free(body_); *active_ = false; }
-        bool _sourceValid() const override { return body_ != nullptr; }
-        size_t _fillBuffer(uint8_t *buffer, size_t maximum) override {
-            size_t n = std::min(maximum, _contentLength - offset_);
-            std::memcpy(buffer, body_ + offset_, n); offset_ += n; return n;
-        }
-     private:
-        char *body_; bool *active_; size_t offset_ = 0;
-    };
-
     void handle_state(AsyncWebServerRequest *req, bool health = false) {
         if (state_response_active_ || ESP.getFreeHeap() < 6500) {
             ++state_rejected_; req->send(503, "application/json", "{\"err\":\"busy or low heap\"}"); return;
@@ -671,7 +656,7 @@ class EcowittRFSensor : public PollingComponent {
         BoundedJson j(body, capacity);
         write_state(j, health, want_regs);
         if (!j.fits()) { std::free(body); req->send(503); return; }
-        auto *response = new (std::nothrow) StateResponse(body, j.size(), &state_response_active_);
+        auto *response = new (std::nothrow) OwnedJsonResponse(body, j.size(), &state_response_active_);
         if (!response) { std::free(body); req->send(503); return; }
         state_response_active_ = true;
         req->send(response);
@@ -687,7 +672,7 @@ class EcowittRFSensor : public PollingComponent {
         j.field("heap", (uint32_t)ESP.getFreeHeap());
         j.field("uptime", (uint32_t)(millis() / 1000));
         j.field("fw", ESPHOME_VERSION);
-        j.field("build", "rain-recovery-status-20261016");
+        j.field("build", "rain-recovery-20261016");
         j.field("ts", (uint32_t)::time(nullptr));
         j.field("max_block", ESP.getMaxFreeBlockSize());
         j.field("reset_reason", ESP.getResetInfoPtr()->reason);
